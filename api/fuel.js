@@ -1,13 +1,14 @@
 async function fetchFrance(lat, lng) {
   try {
-    let url;
     const base = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?limit=500`;
-
+    
+    let url;
     if (lat && lng) {
-      // ✅ v2.1 syntax: where=distance(field, geom'POINT(lng lat)', radius)
-      // Note: POINT takes LONGITUDE first, then LATITUDE
-      const whereClause = `distance(geom, geom'POINT(${lng} ${lat})', 15000m)`;
-      url = `${base}&where=${encodeURIComponent(whereClause)}`;
+      // ✅ v2.1 uses within_distance() not distance()
+      // ✅ Radius format is "15km" not "15000m"
+      // ✅ POINT(longitude latitude) — lng first!
+      const where = `within_distance(geom, geom'POINT(${lng} ${lat})', 15km)`;
+      url = `${base}&where=${encodeURIComponent(where)}`;
     } else {
       url = base;
     }
