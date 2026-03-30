@@ -32,7 +32,9 @@
     .search-box{background:white;border-radius:10px;display:flex;align-items:center;padding:0 10px;gap:8px}
     .search-box input{flex:1;border:none;outline:none;padding:12px 4px;font-size:15px;color:var(--text);background:transparent}
     .search-box input::placeholder{color:#bbb}
-    .loc-btn{background:var(--blue-light);border:none;border-radius:7px;padding:8px 10px;cursor:pointer;font-size:12px;color:var(--blue);font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:4px}
+    .loc-btn{background:var(--blue-light);border:none;border-radius:7px;padding:8px 10px;cursor:pointer;font-size:12px;color:var(--blue);font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:4px;transition:background 0.15s}
+    .loc-btn:hover{background:#d2e3fc}
+    .loc-btn.loading-loc{opacity:0.7;cursor:wait}
 
     /* FUEL TABS */
     .fuel-tabs{display:flex;background:white;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;position:sticky;top:108px;z-index:99}
@@ -76,9 +78,12 @@
 
     /* DETAIL PANEL */
     .card-detail{border-top:1px solid var(--border);padding:14px;background:#fafbff}
-    .all-prices{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
-    .fp{background:white;border:1px solid var(--border);border-radius:8px;padding:9px 4px;text-align:center}
+    .all-prices{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px}
+    /* FIX 5: fuel price tiles are now clickable buttons */
+    .fp{background:white;border:1px solid var(--border);border-radius:8px;padding:9px 4px;text-align:center;cursor:pointer;transition:border-color 0.15s,background 0.15s}
+    .fp:hover:not(.fp-disabled){border-color:#b3c9f0;background:#f4f8ff}
     .fp.active{border-color:var(--blue);background:var(--blue-light)}
+    .fp.fp-disabled{cursor:default;opacity:0.5}
     .fp-type{font-size:10px;color:var(--text2);margin-bottom:3px}
     .fp-p{font-size:15px;font-weight:700;color:var(--text)}
     .fp.active .fp-p{color:var(--blue)}
@@ -126,7 +131,8 @@
     <div class="search-box">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
       <input type="text" id="search-in" placeholder="Ville, commune ou code postal..." oninput="doSearch(this.value)" autocomplete="off"/>
-      <button class="loc-btn" onclick="useMyLocation()">
+      <!-- FIX 6 & 7: button explicitly triggers geolocation permission + shows address -->
+      <button class="loc-btn" id="loc-btn" onclick="useMyLocation()">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
         Près de moi
       </button>
@@ -178,7 +184,10 @@ function getBrand(name){
   for(var k in BRANDS){ if(k!=='default'&&n.includes(k)) return BRANDS[k]; }
   return BRANDS.default;
 }
-function initials(name){ var w=(name||'').trim().split(/\s+/); return w.length>=2?(w[0][0]+w[1][0]).toUpperCase():name.slice(0,2).toUpperCase(); }
+function initials(name){
+  var w=(name||'').trim().split(/\s+/);
+  return w.length>=2?(w[0][0]+w[1][0]).toUpperCase():(name||'??').slice(0,2).toUpperCase();
+}
 
 function dist(lat1,lng1,lat2,lng2){
   var R=6371,a=Math.sin((lat2-lat1)*Math.PI/360)*Math.sin((lat2-lat1)*Math.PI/360)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin((lng2-lng1)*Math.PI/360)*Math.sin((lng2-lng1)*Math.PI/360);
@@ -190,15 +199,35 @@ function formatPrice(p){
   return p.toFixed(3)+'€';
 }
 
-// Map French fuel type names to our internal keys
-// Prices from the API are already in euros (e.g. 2.249)
-// Coordinates may be in 1/100000 degrees format (e.g. 4357200 = 43.572)
+// FIX 2: Improved name resolution — tries multiple fields before falling back to ID
+function resolveStationName(s) {
+  // Try common name fields from the API
+  var candidates = [
+    s.ensigne,
+    s.ensigne_id,
+    s.nom,
+    s.name,
+    s.brand,
+    s.marque
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var v = candidates[i];
+    if (v && typeof v === 'string' && v.trim() && !/^\d+$/.test(v.trim())) {
+      // capitalize first letter of each word
+      return v.trim().replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+    }
+  }
+  // Last resort: derive from address city
+  if (s.ville) return 'Station — ' + s.ville;
+  return 'Station';
+}
+
 function mapFRPrices(s) {
   var prices = {};
   var map = {gazole_prix:'B7', sp95_prix:'SP95', sp98_prix:'SP98', e10_prix:'E10', e85_prix:'E85', gplc_prix:'GPL'};
   Object.keys(map).forEach(function(k){
     var v = parseFloat(s[k]);
-    if(v > 0) prices[map[k]] = v; // store as euros directly
+    if(v > 0) prices[map[k]] = v;
   });
   return prices;
 }
@@ -206,8 +235,6 @@ function mapFRPrices(s) {
 function parseFRStations(data) {
   var raw = data.stations || [];
   return raw.map(function(s){
-    // Coordinates: prefer geom object, otherwise parse raw fields
-    // Raw lat/lng may be in 1/100000 degrees (e.g. 4357200 → 43.572)
     var lat, lng;
     if(s.geom && s.geom.lat && s.geom.lon){
       lat = parseFloat(s.geom.lat);
@@ -215,17 +242,23 @@ function parseFRStations(data) {
     } else {
       lat = parseFloat(s.latitude || 0);
       lng = parseFloat(s.longitude || 0);
-      // Detect 1/100000 degree format
       if(Math.abs(lat) > 1000) lat = lat / 100000;
       if(Math.abs(lng) > 1000) lng = lng / 100000;
     }
     if(!lat || !lng) return null;
     var prices = mapFRPrices(s);
     if(!Object.keys(prices).some(function(k){return prices[k]>0;})) return null;
+
+    // FIX 2: use improved name resolver
+    var name = resolveStationName(s);
+
+    // Store extra fields for FIX 4 (search by city/cp)
     return {
       id: 'fr_' + (s.id || Math.random().toString(36).slice(2,8)),
-      name: s.ensigne || s.ensigne_id || String(s.id) || 'Station',
+      name: name,
       addr: [s.adresse, s.cp, s.ville].filter(Boolean).join(', ') || '',
+      cp: (s.cp || '').toString(),
+      ville: (s.ville || '').toLowerCase(),
       lat: lat, lng: lng, prices: prices,
       d: userLat !== null ? dist(userLat, userLng, lat, lng) : 99999
     };
@@ -263,28 +296,137 @@ function fetchLiveData(){
 
 function getP(s){return s.prices[currentFuel]||0;}
 
+// FIX 4: Search also checks cp and ville fields
 function getFiltered(){
-  var q=searchQ.toLowerCase();
-  return stations.filter(function(s){
+  var q=searchQ.toLowerCase().trim();
+  var filtered = stations.filter(function(s){
     if(getP(s)<=0) return false;
-    if(q) return (s.name||'').toLowerCase().includes(q)||(s.addr||'').toLowerCase().includes(q);
+    if(q){
+      return (s.name||'').toLowerCase().includes(q) ||
+             (s.addr||'').toLowerCase().includes(q) ||
+             (s.cp||'').includes(q) ||
+             (s.ville||'').includes(q);
+    }
     return true;
-  }).sort(function(a,b){return sortMode==='price'?getP(a)-getP(b):(a.d||99999)-(b.d||99999);});
+  });
+
+  // FIX 1: sort is applied correctly and re-read each time
+  filtered.sort(function(a,b){
+    if(sortMode==='dist'){
+      return (a.d||99999)-(b.d||99999);
+    }
+    return getP(a)-getP(b);
+  });
+  return filtered;
 }
 
-function doSearch(v){searchQ=v;render();}
-function setFuel(f,el){currentFuel=f;document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');});el.classList.add('on');render();}
-function setSort(v){sortMode=v;render();}
+function doSearch(v){searchQ=v;selectedId=null;render();}
 
+function setFuel(f,el){
+  currentFuel=f;
+  document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');});
+  el.classList.add('on');
+  render();
+}
+
+// FIX 1: setSort reads the select value correctly and re-renders
+function setSort(v){
+  sortMode=v;
+  render();
+}
+
+// FIX 5: switch fuel from detail panel tile click
+function switchFuelFromCard(fuelKey, event) {
+  event.stopPropagation();
+  if(!fuelKey) return;
+  currentFuel = fuelKey;
+  // Update the tab highlight
+  document.querySelectorAll('.ftab').forEach(function(t){
+    t.classList.toggle('on', t.textContent.trim() === (fuelKey === 'B7' ? 'Gazole' : fuelKey));
+  });
+  render();
+}
+
+// FIX 6 & 7: explicit geolocation trigger + reverse geocode to fill search bar
 function useMyLocation(){
-  if(!navigator.geolocation){showToast('Géolocalisation non supportée');return;}
-  showToast('Localisation en cours...');
-  navigator.geolocation.getCurrentPosition(function(pos){
-    userLat=pos.coords.latitude;userLng=pos.coords.longitude;
-    stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
-    showToast('Localisation mise à jour !');
-    render();
-  },function(){showToast('Impossible d\'obtenir la position. Essayez de rechercher par ville.');});
+  if(!navigator.geolocation){
+    showToast('Géolocalisation non supportée par ce navigateur');
+    return;
+  }
+  var btn = document.getElementById('loc-btn');
+  btn.classList.add('loading-loc');
+  btn.textContent = '⏳ Localisation...';
+
+  // This call will trigger the browser's permission dialog if not yet decided
+  navigator.geolocation.getCurrentPosition(
+    function(pos){
+      userLat = pos.coords.latitude;
+      userLng = pos.coords.longitude;
+
+      btn.classList.remove('loading-loc');
+      btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg> Près de moi';
+
+      // Recalculate distances for already-loaded stations
+      stations.forEach(function(s){ s.d = dist(userLat, userLng, s.lat, s.lng); });
+
+      // FIX 7: reverse geocode to show address in search bar
+      reverseGeocode(userLat, userLng, function(label){
+        var input = document.getElementById('search-in');
+        if(input && label){
+          input.value = label;
+          // Do NOT filter by this label — just display it
+          // Clear text search so all nearby stations show
+          searchQ = '';
+        }
+        showToast('📍 Position trouvée : ' + (label || 'votre position'));
+      });
+
+      // Switch sort to nearest first automatically
+      sortMode = 'dist';
+      // Update the select element value too
+      var sel = document.querySelector('.sort-bar select');
+      if(sel) sel.value = 'dist';
+
+      // Reload data with user coords for better radius
+      fetchLiveData()
+        .then(function(){
+          stations.forEach(function(s){ s.d = dist(userLat, userLng, s.lat, s.lng); });
+          render();
+        })
+        .catch(function(){
+          render(); // still render with already-loaded stations
+        });
+    },
+    function(err){
+      btn.classList.remove('loading-loc');
+      btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg> Près de moi';
+
+      if(err.code === 1){
+        showToast('❌ Accès à la position refusé. Activez la localisation dans les réglages du navigateur.');
+      } else if(err.code === 2){
+        showToast('❌ Position indisponible. Vérifiez votre GPS.');
+      } else {
+        showToast('❌ Délai dépassé. Réessayez.');
+      }
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+  );
+}
+
+// FIX 7: reverse geocode using nominatim (no key needed)
+function reverseGeocode(lat, lng, cb){
+  fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lng+'&zoom=14&accept-language=fr', {
+    headers: { 'Accept-Language': 'fr' }
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    var a = data.address || {};
+    var label = a.village || a.town || a.city || a.suburb || a.municipality || a.county || '';
+    var cp = a.postcode || '';
+    var display = [cp, label].filter(Boolean).join(' ');
+    cb(display || data.display_name || '');
+  })
+  .catch(function(){ cb(''); });
 }
 
 function toggleCard(id){selectedId=selectedId===id?null:id;render();}
@@ -300,8 +442,11 @@ function toggleFav(id,name,e){
 function showToast(msg){
   var t=document.getElementById('toast');
   t.textContent=msg;t.classList.add('show');
-  setTimeout(function(){t.classList.remove('show');},2200);
+  setTimeout(function(){t.classList.remove('show');},2800);
 }
+
+var FUEL_TABS = ['SP95','SP98','E10','E85','B7','GPL'];
+var FUEL_LABELS = {SP95:'SP95',SP98:'SP98',E10:'E10',E85:'E85',B7:'Gazole',GPL:'GPL'};
 
 function render(){
   var list=getFiltered();
@@ -323,8 +468,12 @@ function render(){
   html+='<div class="stat"><div class="stat-label">Économie max</div><div class="stat-val green">'+(minP&&maxP?(maxP-minP).toFixed(3)+'€':'—')+'</div></div>';
   html+='</div>';
 
+  // FIX 1: preserve sortMode in the select so the UI matches state
   html+='<div class="sort-bar"><span>'+list.length.toLocaleString()+' stations avec '+currentFuel+'</span>';
-  html+='<select onchange="setSort(this.value)"><option value="price">Moins cher d\'abord</option><option value="dist">Le plus proche d\'abord</option></select></div>';
+  html+='<select onchange="setSort(this.value)">';
+  html+='<option value="price"'+(sortMode==='price'?' selected':'')+'>Moins cher d\'abord</option>';
+  html+='<option value="dist"'+(sortMode==='dist'?' selected':'')+'>Le plus proche d\'abord</option>';
+  html+='</select></div>';
 
   html+='<div class="list">';
   if(list.length===0){
@@ -344,9 +493,9 @@ function render(){
       html+='<div class="card-top">';
       html+='<div class="brand-logo" style="background:'+brand.bg+';color:'+brand.c+'">'+initials(s.name)+'</div>';
       html+='<div class="card-info">';
-      html+='<div class="card-name">'+s.name+(isBest?'<span class="best-badge">&#9733; Meilleur prix</span>':'')+'</div>';
-      if(s.addr) html+='<div class="card-addr">'+s.addr+'</div>';
-      html+='<div class="card-dist">à '+distStr+' km</div>';
+      html+='<div class="card-name">'+escHtml(s.name)+(isBest?'<span class="best-badge">&#9733; Meilleur prix</span>':'')+'</div>';
+      if(s.addr) html+='<div class="card-addr">'+escHtml(s.addr)+'</div>';
+      if(userLat!==null) html+='<div class="card-dist">à '+distStr+' km</div>';
       html+='</div>';
       html+='<div class="price-col">';
       html+='<div class="price-big" style="color:'+(isBest?'#1e8c45':'#202124')+'">'+formatPrice(p)+'</div>';
@@ -358,18 +507,24 @@ function render(){
         html+='<div class="card-detail">';
         html+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Tous les prix à cette station</div>';
         html+='<div class="all-prices">';
+        // FIX 5: each fuel tile is a clickable button that switches currentFuel
         [{k:'SP95',l:'SP95'},{k:'SP98',l:'SP98'},{k:'E10',l:'E10'},{k:'E85',l:'E85'},{k:'B7',l:'Gazole'},{k:'GPL',l:'GPL'}].forEach(function(f){
           var fp=s.prices[f.k];
-          html+='<div class="fp'+(f.k===currentFuel?' active':'')+'"><div class="fp-type">'+f.l+'</div>';
-          html+=fp&&fp>0?'<div class="fp-p">'+formatPrice(fp)+'</div>':'<div class="fp-na">—</div>';
+          var hasPrice = fp && fp > 0;
+          var isActive = f.k === currentFuel;
+          var cls = 'fp' + (isActive?' active':'') + (hasPrice?'':' fp-disabled');
+          var clickAttr = hasPrice ? ' onclick="switchFuelFromCard(\''+f.k+'\',event)"' : '';
+          html+='<div class="'+cls+'"'+clickAttr+'>';
+          html+='<div class="fp-type">'+f.l+'</div>';
+          html+=hasPrice?'<div class="fp-p">'+formatPrice(fp)+'</div>':'<div class="fp-na">—</div>';
           html+='</div>';
         });
         html+='</div>';
         var tankSave=(parseFloat(saveVsMax)*50).toFixed(2);
         if(parseFloat(saveVsMax)>0.001) html+='<div class="saving-box">&#127381; Faire le plein ici (50L) vs le plus cher proche : <strong>économisez '+tankSave+'€</strong></div>';
         html+='<div class="action-btns">';
-        html+='<a class="btn-go" href="https://www.google.com/maps/search/'+encodeURIComponent(s.name+' '+s.addr)+'" target="_blank" onclick="event.stopPropagation()">&#128205; Y aller</a>';
-        html+='<button class="btn-save'+(isFav?' saved':'')+'" onclick="toggleFav(\''+s.id+'\',\''+s.name+'\',event)">'+(isFav?'&#9733;':'&#9734;')+'</button>';
+        html+='<a class="btn-go" href="https://www.google.com/maps/search/'+encodeURIComponent((s.name||'')+' '+(s.addr||''))+'" target="_blank" onclick="event.stopPropagation()">&#128205; Y aller</a>';
+        html+='<button class="btn-save'+(isFav?' saved':'')+'" onclick="toggleFav(\''+s.id+'\',\''+escAttr(s.name)+'\',event)">'+(isFav?'&#9733;':'&#9734;')+'</button>';
         html+='</div></div>';
       }
       html+='</div>';
@@ -379,6 +534,10 @@ function render(){
   html+='</div>';
   document.getElementById('root').innerHTML=html;
 }
+
+// XSS helpers
+function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escAttr(s){ return (s||'').replace(/'/g,'\\\''); }
 
 function showError(){
   document.getElementById('root').innerHTML='<div class="error-box">'+
@@ -390,46 +549,61 @@ function showError(){
 
 function loadDemo(){
   stations=[
-    {id:'d1',name:'Leclerc',addr:'12 Rue du Commerce, 75015 Paris',lat:48.841,lng:2.290,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.899,GPL:0},d:0.3},
-    {id:'d2',name:'Intermarché',addr:'45 Avenue Victor Hugo, 69003 Lyon',lat:45.757,lng:4.834,prices:{SP95:1.779,SP98:1.859,E10:1.739,B7:1.719,E85:0.929,GPL:0},d:0.7},
-    {id:'d3',name:'Total',addr:'8 Boulevard Gambetta, 33000 Bordeaux',lat:44.837,lng:-0.580,prices:{SP95:1.829,SP98:1.929,E10:1.789,B7:1.769,E85:0,GPL:0.959},d:1.1},
-    {id:'d4',name:'TotalEnergies',addr:'23 Rue de la République, 13001 Marseille',lat:43.297,lng:5.381,prices:{SP95:1.839,SP98:1.939,E10:1.799,B7:1.779,E85:0,GPL:0.969},d:1.4},
-    {id:'d5',name:'Carrefour',addr:'56 Avenue du Général de Gaulle, 06000 Nice',lat:43.710,lng:7.262,prices:{SP95:1.769,SP98:1.849,E10:1.729,B7:1.709,E85:0.919,GPL:0},d:1.8},
-    {id:'d6',name:'Super U',addr:'3 Route de Nantes, 44000 Nantes',lat:47.218,lng:-1.553,prices:{SP95:1.749,SP98:1.829,E10:1.709,B7:1.689,E85:0.889,GPL:0},d:2.1},
-    {id:'d7',name:'Auchan',addr:'78 Rue Saint-Michel, 31000 Toulouse',lat:43.604,lng:1.444,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.909,GPL:0},d:2.5},
-    {id:'d8',name:'BP',addr:'15 Avenue de la Gare, 67000 Strasbourg',lat:48.573,lng:7.752,prices:{SP95:1.849,SP98:1.949,E10:1.809,B7:1.789,E85:0,GPL:0.979},d:3.1},
-    {id:'d9',name:'Shell',addr:'32 Boulevard de la Liberté, 59000 Lille',lat:50.629,lng:3.057,prices:{SP95:1.859,SP98:1.959,E10:1.819,B7:1.799,E85:0,GPL:0.989},d:3.8},
-    {id:'d10',name:'Esso',addr:'9 Quai de la Pêcherie, 69001 Lyon',lat:45.766,lng:4.828,prices:{SP95:1.799,SP98:1.879,E10:1.759,B7:1.739,E85:0.939,GPL:0},d:4.2},
+    {id:'d1',name:'Leclerc',addr:'12 Rue du Commerce, 75015 Paris',cp:'75015',ville:'paris',lat:48.841,lng:2.290,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.899,GPL:0},d:0.3},
+    {id:'d2',name:'Intermarché',addr:'45 Avenue Victor Hugo, 69003 Lyon',cp:'69003',ville:'lyon',lat:45.757,lng:4.834,prices:{SP95:1.779,SP98:1.859,E10:1.739,B7:1.719,E85:0.929,GPL:0},d:0.7},
+    {id:'d3',name:'Total',addr:'8 Boulevard Gambetta, 33000 Bordeaux',cp:'33000',ville:'bordeaux',lat:44.837,lng:-0.580,prices:{SP95:1.829,SP98:1.929,E10:1.789,B7:1.769,E85:0,GPL:0.959},d:1.1},
+    {id:'d4',name:'TotalEnergies',addr:'23 Rue de la République, 13001 Marseille',cp:'13001',ville:'marseille',lat:43.297,lng:5.381,prices:{SP95:1.839,SP98:1.939,E10:1.799,B7:1.779,E85:0,GPL:0.969},d:1.4},
+    {id:'d5',name:'Carrefour',addr:'56 Avenue du Général de Gaulle, 06000 Nice',cp:'06000',ville:'nice',lat:43.710,lng:7.262,prices:{SP95:1.769,SP98:1.849,E10:1.729,B7:1.709,E85:0.919,GPL:0},d:1.8},
+    {id:'d6',name:'Super U',addr:'3 Route de Nantes, 44000 Nantes',cp:'44000',ville:'nantes',lat:47.218,lng:-1.553,prices:{SP95:1.749,SP98:1.829,E10:1.709,B7:1.689,E85:0.889,GPL:0},d:2.1},
+    {id:'d7',name:'Auchan',addr:'78 Rue Saint-Michel, 31000 Toulouse',cp:'31000',ville:'toulouse',lat:43.604,lng:1.444,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.909,GPL:0},d:2.5},
+    {id:'d8',name:'BP',addr:'15 Avenue de la Gare, 67000 Strasbourg',cp:'67000',ville:'strasbourg',lat:48.573,lng:7.752,prices:{SP95:1.849,SP98:1.949,E10:1.809,B7:1.789,E85:0,GPL:0.979},d:3.1},
+    {id:'d9',name:'Shell',addr:'32 Boulevard de la Liberté, 59000 Lille',cp:'59000',ville:'lille',lat:50.629,lng:3.057,prices:{SP95:1.859,SP98:1.959,E10:1.819,B7:1.799,E85:0,GPL:0.989},d:3.8},
+    {id:'d10',name:'Esso',addr:'9 Quai de la Pêcherie, 69001 Lyon',cp:'69001',ville:'lyon',lat:45.766,lng:4.828,prices:{SP95:1.799,SP98:1.879,E10:1.759,B7:1.739,E85:0.939,GPL:0},d:4.2},
   ];
   render();
 }
 
-// Step 1: fetch data — render as soon as it arrives, location is optional
-fetchLiveData()
-  .then(function(){
-    if(userLat !== null){
-      stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
-    }
-    render();
-  })
-  .catch(function(err){
-    console.error('Données carburant en direct échouées:', err);
-    showError();
-  });
-
-// Step 2: request location in parallel — if granted, re-sort and re-render
-if(navigator.geolocation){
-  navigator.geolocation.getCurrentPosition(
-    function(pos){
-      userLat=pos.coords.latitude;
-      userLng=pos.coords.longitude;
-      stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
-      render();
-    },
-    function(){ /* denied or unavailable — already rendered without distances */ },
-    { timeout: 8000, maximumAge: 60000 }
-  );
+// FIX 3: fetch location first, THEN load data with coordinates for proper nearby results
+function init(){
+  if(navigator.geolocation){
+    // Try a quick silent location grab before first data load
+    navigator.geolocation.getCurrentPosition(
+      function(pos){
+        userLat = pos.coords.latitude;
+        userLng = pos.coords.longitude;
+        sortMode = 'dist';
+        fetchLiveData()
+          .then(function(){
+            stations.forEach(function(s){ s.d = dist(userLat, userLng, s.lat, s.lng); });
+            render();
+          })
+          .catch(function(err){
+            console.error('Données carburant en direct échouées:', err);
+            showError();
+          });
+      },
+      function(){
+        // Permission denied or unavailable — load without location
+        fetchLiveData()
+          .then(function(){ render(); })
+          .catch(function(err){
+            console.error('Données carburant en direct échouées:', err);
+            showError();
+          });
+      },
+      { timeout: 5000, maximumAge: 300000 }
+    );
+  } else {
+    fetchLiveData()
+      .then(function(){ render(); })
+      .catch(function(err){
+        console.error('Données carburant en direct échouées:', err);
+        showError();
+      });
+  }
 }
+
+init();
 </script>
 </body>
 </html>
