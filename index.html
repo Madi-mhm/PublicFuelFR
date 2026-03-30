@@ -404,77 +404,31 @@ function loadDemo(){
   render();
 }
 
-// Both data AND location must be ready before we render
-var dataReady = false;
-var locationReady = false;
-
-function tryRender(){
-  if(!dataReady || !locationReady) return;
-  if(userLat !== null){
-    stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
-  }
-  render();
-}
-
-function showLocating(){
-  document.getElementById('root').innerHTML =
-    '<div class="loading"><div class="spinner"></div>' +
-    '<strong>Localisation en cours...</strong>' +
-    '<p>Autorisez la localisation pour voir les prix les plus proches</p>' +
-    '</div>';
-}
-
-function showLocationWarning(){
-  document.getElementById('root').innerHTML =
-    '<div class="error-box">' +
-    '<div style="font-size:40px;margin-bottom:12px">📍</div>' +
-    '<h3>Activez la localisation pour trouver les prix près de vous</h3>' +
-    '<p>PrixCarburant a besoin de votre position pour afficher les stations les plus proches et trier par distance.<br><br>' +
-    'Pour l\'activer, appuyez sur l\'icône de cadenas dans la barre d\'adresse de votre navigateur et autorisez la localisation, puis actualisez la page.</p>' +
-    '<button class="retry-btn" onclick="window.location.reload()">🔄 Réessayer</button>' +
-    '</div>';
-}
-
-function skipLocation(){
-  locationReady=true;
-  if(dataReady) render();
-  else {
-    document.getElementById('root').innerHTML =
-      '<div class="loading"><div class="spinner"></div>' +
-      '<strong>Chargement des stations...</strong>' +
-      '<p>Récupération des données en cours</p>' +
-      '</div>';
-  }
-}
-
-// Step 1: start fetching data
+// Step 1: fetch data — render as soon as it arrives, location is optional
 fetchLiveData()
   .then(function(){
-    dataReady = true;
-    tryRender();
+    if(userLat !== null){
+      stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
+    }
+    render();
   })
   .catch(function(err){
     console.error('Données carburant en direct échouées:', err);
     showError();
   });
 
-// Step 2: get location (runs in parallel with data fetch)
+// Step 2: request location in parallel — if granted, re-sort and re-render
 if(navigator.geolocation){
-  showLocating();
   navigator.geolocation.getCurrentPosition(
     function(pos){
       userLat=pos.coords.latitude;
       userLng=pos.coords.longitude;
-      locationReady=true;
-      tryRender();
+      stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
+      render();
     },
-    function(){
-      skipLocation();
-    },
+    function(){ /* denied or unavailable — already rendered without distances */ },
     { timeout: 8000, maximumAge: 60000 }
   );
-} else {
-  skipLocation();
 }
 </script>
 </body>
