@@ -301,6 +301,8 @@ function getFiltered(){
   var q=searchQ.toLowerCase().trim();
   var filtered = stations.filter(function(s){
     if(getP(s)<=0) return false;
+    // ✅ Add this: exclude stations beyond 15km when location is known
+    if(userLat !== null && s.d > 15) return false;
     if(q){
       return (s.name||'').toLowerCase().includes(q) ||
              (s.addr||'').toLowerCase().includes(q) ||
