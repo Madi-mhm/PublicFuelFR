@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PrixCarburant — Trouvez le carburant le moins cher près de vous</title>
+  <meta name="description" content="Trouvez le carburant le moins cher près de vous. Prix en direct mis à jour régulièrement depuis les données officielles du gouvernement français."/>
+  <meta name="theme-color" content="#1a73e8"/>
+  <link rel="manifest" href="manifest.json"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+    :root{
+      --blue:#1a73e8;--blue-light:#e8f0fe;--blue-dark:#0d47a1;
+      --green:#1e8c45;--green-light:#e6f4ea;
+      --amber:#f59c00;--amber-light:#fef7e0;
+      --red:#d93025;--red-light:#fce8e6;
+      --gray:#5f6368;--border:#e0e0e0;--bg:#f8f9fa;
+      --white:#ffffff;--text:#202124;--text2:#5f6368
+    }
+    body{background:var(--bg);min-height:100vh}
+    .app{max-width:480px;margin:0 auto;min-height:100vh;background:var(--bg);display:flex;flex-direction:column}
+
+    /* HEADER */
+    .header{background:var(--blue);padding:14px 16px;position:sticky;top:0;z-index:100}
+    .logo-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+    .logo-icon{width:30px;height:30px;background:white;border-radius:7px;display:flex;align-items:center;justify-content:center}
+    .logo-icon svg{width:18px;height:18px}
+    .logo-text{color:white;font-size:19px;font-weight:700;letter-spacing:-0.4px;flex:1}
+    .live-pill{background:rgba(255,255,255,0.2);color:white;font-size:11px;padding:3px 8px;border-radius:20px;display:flex;align-items:center;gap:4px}
+    .live-dot{width:6px;height:6px;background:#4cff82;border-radius:50%;animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+    .search-box{background:white;border-radius:10px;display:flex;align-items:center;padding:0 10px;gap:8px}
+    .search-box input{flex:1;border:none;outline:none;padding:12px 4px;font-size:15px;color:var(--text);background:transparent}
+    .search-box input::placeholder{color:#bbb}
+    .loc-btn{background:var(--blue-light);border:none;border-radius:7px;padding:8px 10px;cursor:pointer;font-size:12px;color:var(--blue);font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:4px}
+
+    /* FUEL TABS */
+    .fuel-tabs{display:flex;background:white;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;position:sticky;top:108px;z-index:99}
+    .fuel-tabs::-webkit-scrollbar{display:none}
+    .ftab{padding:12px 16px;font-size:13px;font-weight:500;color:var(--gray);border:none;background:transparent;cursor:pointer;white-space:nowrap;border-bottom:3px solid transparent;transition:all 0.15s}
+    .ftab.on{color:var(--blue);border-bottom:3px solid var(--blue)}
+
+    /* STATS BAR */
+    .stats-row{display:grid;grid-template-columns:1fr 1fr 1fr;background:white;border-bottom:1px solid var(--border)}
+    .stat{padding:10px 12px;text-align:center;border-right:1px solid var(--border)}
+    .stat:last-child{border-right:none}
+    .stat-label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px}
+    .stat-val{font-size:17px;font-weight:700;color:var(--text)}
+    .stat-val.green{color:var(--green)}
+
+    /* UPDATED BAR */
+    .updated-bar{background:#f0f7ff;border-bottom:1px solid #c5daf6;padding:7px 14px;font-size:11px;color:#185fa5;display:flex;align-items:center;justify-content:space-between}
+
+    /* SORT BAR */
+    .sort-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:white;border-bottom:1px solid var(--border)}
+    .sort-bar span{font-size:12px;color:var(--text2);font-weight:500}
+    .sort-bar select{font-size:12px;border:1px solid var(--border);border-radius:6px;padding:5px 8px;background:white;color:var(--text);cursor:pointer;outline:none}
+
+    /* STATION CARDS */
+    .list{flex:1;padding:6px 0 24px}
+    .card{background:white;margin:6px 10px;border-radius:12px;border:1px solid var(--border);overflow:hidden;cursor:pointer;transition:box-shadow 0.15s,border-color 0.15s}
+    .card:hover{box-shadow:0 2px 12px rgba(26,115,232,0.12);border-color:#b3c9f0}
+    .card.best{border:2px solid var(--green)}
+    .card.selected{border:2px solid var(--blue)}
+    .card-top{display:flex;align-items:center;gap:12px;padding:14px}
+    .brand-logo{width:46px;height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;letter-spacing:-0.3px}
+    .card-info{flex:1;min-width:0}
+    .card-name{font-size:14px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .best-badge{background:var(--green-light);color:var(--green);font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600;flex-shrink:0}
+    .card-addr{font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .card-dist{font-size:11px;color:#bbb;margin-top:2px}
+    .price-col{text-align:right;flex-shrink:0}
+    .price-big{font-size:27px;font-weight:700;line-height:1}
+    .price-unit{font-size:11px;color:var(--text2)}
+    .save-tag{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;margin-top:3px;display:inline-block;background:var(--green-light);color:var(--green)}
+
+    /* DETAIL PANEL */
+    .card-detail{border-top:1px solid var(--border);padding:14px;background:#fafbff}
+    .all-prices{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+    .fp{background:white;border:1px solid var(--border);border-radius:8px;padding:9px 4px;text-align:center}
+    .fp.active{border-color:var(--blue);background:var(--blue-light)}
+    .fp-type{font-size:10px;color:var(--text2);margin-bottom:3px}
+    .fp-p{font-size:15px;font-weight:700;color:var(--text)}
+    .fp.active .fp-p{color:var(--blue)}
+    .fp-na{font-size:13px;color:#ccc;margin-top:2px}
+    .saving-box{background:var(--green-light);color:var(--green);border-radius:8px;padding:9px 12px;font-size:12px;font-weight:500;margin-bottom:12px}
+    .action-btns{display:flex;gap:8px}
+    .btn-go{flex:1;background:var(--blue);color:white;border:none;border-radius:9px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;text-decoration:none}
+    .btn-go:hover{background:var(--blue-dark)}
+    .btn-save{background:white;border:1px solid var(--border);border-radius:9px;padding:12px 16px;font-size:18px;cursor:pointer;color:var(--gray);transition:all 0.15s}
+    .btn-save.saved{color:#e8a000;border-color:#e8a000}
+
+    /* LOADING / ERROR */
+    .loading{padding:60px 20px;text-align:center}
+    .spinner{width:36px;height:36px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .loading p{color:var(--text2);font-size:13px;margin-top:6px}
+    .error-box{margin:20px;background:white;border:1px solid var(--border);border-radius:12px;padding:24px;text-align:center}
+    .error-box h3{color:var(--text);font-size:16px;margin-bottom:8px}
+    .error-box p{color:var(--text2);font-size:13px;line-height:1.6;margin-bottom:16px}
+    .retry-btn{background:var(--blue);color:white;border:none;border-radius:8px;padding:11px 24px;font-size:14px;cursor:pointer;font-weight:600}
+    .empty{padding:40px;text-align:center;color:var(--text2);font-size:14px}
+
+    /* TOAST */
+    .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#323232;color:white;padding:10px 20px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity 0.3s;pointer-events:none;white-space:nowrap}
+    .toast.show{opacity:1}
+
+    @media(min-width:480px){
+      .app{border-left:1px solid var(--border);border-right:1px solid var(--border)}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="logo-row">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#1a73e8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h2m14 0h2M12 3v2m0 14v2"/>
+          <circle cx="12" cy="12" r="4"/>
+        </svg>
+      </div>
+      <span class="logo-text">PrixCarburant</span>
+      <div class="live-pill"><span class="live-dot"></span> EN DIRECT</div>
+    </div>
+    <div class="search-box">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="search-in" placeholder="Ville, commune ou code postal..." oninput="doSearch(this.value)" autocomplete="off"/>
+      <button class="loc-btn" onclick="useMyLocation()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
+        Près de moi
+      </button>
+    </div>
+  </div>
+
+  <div class="fuel-tabs">
+    <button class="ftab on" onclick="setFuel('SP95',this)">SP95</button>
+    <button class="ftab" onclick="setFuel('SP98',this)">SP98</button>
+    <button class="ftab" onclick="setFuel('E10',this)">E10</button>
+    <button class="ftab" onclick="setFuel('E85',this)">E85</button>
+    <button class="ftab" onclick="setFuel('B7',this)">Gazole</button>
+    <button class="ftab" onclick="setFuel('GPL',this)">GPL</button>
+  </div>
+
+  <div id="root">
+    <div class="loading">
+      <div class="spinner"></div>
+      <strong>Chargement des prix en direct...</strong>
+      <p>Récupération des données gouvernementales françaises</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var stations = [];
+var currentFuel = 'SP95';
+var selectedId = null;
+var sortMode = 'price';
+var userLat = null, userLng = null;
+var favourites = JSON.parse(localStorage.getItem('pf_favs')||'{}');
+var searchQ = '';
+
+var BRANDS = {
+  'total':{c:'#e31837',bg:'#fde8eb'},'totalenergies':{c:'#e31837',bg:'#fde8eb'},
+  'leclerc':{c:'#003da5',bg:'#e6edf8'},'carrefour':{c:'#005bab',bg:'#e6eef8'},
+  'intermarche':{c:'#e31837',bg:'#fde8eb'},'auchan':{c:'#e8701a',bg:'#fef0e6'},
+  'casino':{c:'#00a037',bg:'#e6f7ed'},'super u':{c:'#005bab',bg:'#e6eef8'},
+  'bp':{c:'#006b3f',bg:'#e6f4ee'},'shell':{c:'#d4a000',bg:'#fffbe6'},
+  'esso':{c:'#0040a0',bg:'#e6edf8'},'jet':{c:'#e31837',bg:'#fde8eb'},
+  'gulf':{c:'#f04e23',bg:'#feeee9'},'texaco':{c:'#e31837',bg:'#fde8eb'},
+  'default':{c:'#1a73e8',bg:'#e8f0fe'}
+};
+
+function getBrand(name){
+  var n=(name||'').toLowerCase();
+  for(var k in BRANDS){ if(k!=='default'&&n.includes(k)) return BRANDS[k]; }
+  return BRANDS.default;
+}
+function initials(name){ var w=(name||'').trim().split(/\s+/); return w.length>=2?(w[0][0]+w[1][0]).toUpperCase():name.slice(0,2).toUpperCase(); }
+
+function dist(lat1,lng1,lat2,lng2){
+  var R=6371,a=Math.sin((lat2-lat1)*Math.PI/360)*Math.sin((lat2-lat1)*Math.PI/360)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin((lng2-lng1)*Math.PI/360)*Math.sin((lng2-lng1)*Math.PI/360);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function formatPrice(p){
+  if(!p||p<=0) return null;
+  return (p/100).toFixed(3)+'€';
+}
+
+// Map French fuel type names to our internal keys
+function mapFRPrices(s) {
+  var prices = {};
+  var map = {gazole_prix:'B7', sp95_prix:'SP95', sp98_prix:'SP98', e10_prix:'E10', e85_prix:'E85', gplc_prix:'GPL'};
+  Object.keys(map).forEach(function(k){
+    var v = parseFloat(s[k]);
+    if(v > 0) prices[map[k]] = Math.round(v * 100);
+  });
+  return prices;
+}
+
+function parseFRStations(data) {
+  var raw = data.stations || [];
+  return raw.map(function(s){
+    var lat = parseFloat(s.latitude || 0);
+    var lng = parseFloat(s.longitude || 0);
+    if(!lat || !lng) return null;
+    var prices = mapFRPrices(s);
+    if(!Object.keys(prices).some(function(k){return prices[k]>0;})) return null;
+    return {
+      id: 'fr_' + (s.id || Math.random().toString(36).slice(2,8)),
+      name: s.ensigne || s.ensigne_id || s.id || 'Station',
+      addr: [s.adresse, s.cp, s.ville].filter(Boolean).join(', ') || '',
+      lat: lat, lng: lng, prices: prices,
+      d: userLat !== null ? dist(userLat, userLng, lat, lng) : 99999
+    };
+  }).filter(Boolean);
+}
+
+function fetchLiveData(){
+  var url = '/api/fuel';
+  if(userLat !== null && userLng !== null){
+    url += '?lat=' + userLat + '&lng=' + userLng;
+  }
+  return fetch(url)
+    .then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(payload){
+      if(!payload || !Array.isArray(payload.results)){
+        throw new Error('Réponse API invalide');
+      }
+      stations = [];
+      payload.results.forEach(function(result){
+        if(result.ok && result.data && result.country === 'FR'){
+          parseFRStations(result.data).forEach(function(s){
+            stations.push(s);
+          });
+        }
+      });
+      if(!stations.length){
+        throw new Error('Aucune station retournée');
+      }
+      return payload;
+    });
+}
+
+function getP(s){return s.prices[currentFuel]||0;}
+
+function getFiltered(){
+  var q=searchQ.toLowerCase();
+  return stations.filter(function(s){
+    if(getP(s)<=0) return false;
+    if(q) return (s.name||'').toLowerCase().includes(q)||(s.addr||'').toLowerCase().includes(q);
+    return true;
+  }).sort(function(a,b){return sortMode==='price'?getP(a)-getP(b):(a.d||99999)-(b.d||99999);});
+}
+
+function doSearch(v){searchQ=v;render();}
+function setFuel(f,el){currentFuel=f;document.querySelectorAll('.ftab').forEach(function(t){t.classList.remove('on');});el.classList.add('on');render();}
+function setSort(v){sortMode=v;render();}
+
+function useMyLocation(){
+  if(!navigator.geolocation){showToast('Géolocalisation non supportée');return;}
+  showToast('Localisation en cours...');
+  navigator.geolocation.getCurrentPosition(function(pos){
+    userLat=pos.coords.latitude;userLng=pos.coords.longitude;
+    stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
+    showToast('Localisation mise à jour !');
+    render();
+  },function(){showToast('Impossible d\'obtenir la position. Essayez de rechercher par ville.');});
+}
+
+function toggleCard(id){selectedId=selectedId===id?null:id;render();}
+
+function toggleFav(id,name,e){
+  e.stopPropagation();
+  if(favourites[id]){delete favourites[id];showToast('Retiré des favoris');}
+  else{favourites[id]=name;showToast('Ajouté aux favoris !');}
+  localStorage.setItem('pf_favs',JSON.stringify(favourites));
+  render();
+}
+
+function showToast(msg){
+  var t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  setTimeout(function(){t.classList.remove('show');},2200);
+}
+
+function render(){
+  var list=getFiltered();
+  var prices=list.map(function(s){return getP(s);});
+  var minP=prices.length?Math.min.apply(null,prices):0;
+  var maxP=prices.length?Math.max.apply(null,prices):0;
+  var avgP=prices.length?prices.reduce(function(a,b){return a+b;},0)/prices.length:0;
+
+  var html='';
+
+  html+='<div class="updated-bar">';
+  html+='<span>&#128197; Mis à jour sous 30 min &nbsp;|&nbsp; '+stations.length.toLocaleString()+' stations en France</span>';
+  html+='<span style="color:#1e8c45;font-weight:600">&#10003; En direct</span>';
+  html+='</div>';
+
+  html+='<div class="stats-row">';
+  html+='<div class="stat"><div class="stat-label">Le moins cher</div><div class="stat-val green">'+(minP?formatPrice(minP):'—')+'</div></div>';
+  html+='<div class="stat"><div class="stat-label">Moyenne</div><div class="stat-val">'+(avgP?formatPrice(avgP):'—')+'</div></div>';
+  html+='<div class="stat"><div class="stat-label">Économie max</div><div class="stat-val green">'+(minP&&maxP?((maxP-minP)/100).toFixed(3)+'€':'—')+'</div></div>';
+  html+='</div>';
+
+  html+='<div class="sort-bar"><span>'+list.length.toLocaleString()+' stations avec '+currentFuel+'</span>';
+  html+='<select onchange="setSort(this.value)"><option value="price">Moins cher d\'abord</option><option value="dist">Le plus proche d\'abord</option></select></div>';
+
+  html+='<div class="list">';
+  if(list.length===0){
+    html+='<div class="empty">Aucune station trouvée.<br>Essayez une autre recherche ou un autre type de carburant.</div>';
+  } else {
+    var show=list.slice(0,40);
+    show.forEach(function(s,i){
+      var p=getP(s);
+      var isBest=i===0&&sortMode==='price';
+      var isSel=selectedId===s.id;
+      var brand=getBrand(s.name);
+      var distStr=s.d<100?s.d.toFixed(1):Math.round(s.d);
+      var saveVsMax=((maxP-p)/100).toFixed(3);
+      var isFav=!!favourites[s.id];
+
+      html+='<div class="card'+(isBest?' best':'')+(isSel?' selected':'')+'" onclick="toggleCard(\''+s.id+'\')">';
+      html+='<div class="card-top">';
+      html+='<div class="brand-logo" style="background:'+brand.bg+';color:'+brand.c+'">'+initials(s.name)+'</div>';
+      html+='<div class="card-info">';
+      html+='<div class="card-name">'+s.name+(isBest?'<span class="best-badge">&#9733; Meilleur prix</span>':'')+'</div>';
+      if(s.addr) html+='<div class="card-addr">'+s.addr+'</div>';
+      html+='<div class="card-dist">à '+distStr+' km</div>';
+      html+='</div>';
+      html+='<div class="price-col">';
+      html+='<div class="price-big" style="color:'+(isBest?'#1e8c45':'#202124')+'">'+formatPrice(p)+'</div>';
+      html+='<div class="price-unit">/litre</div>';
+      if(parseFloat(saveVsMax)>0.001) html+='<div class="save-tag">Économisez '+saveVsMax+'€</div>';
+      html+='</div></div>';
+
+      if(isSel){
+        html+='<div class="card-detail">';
+        html+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Tous les prix à cette station</div>';
+        html+='<div class="all-prices">';
+        [{k:'SP95',l:'SP95'},{k:'SP98',l:'SP98'},{k:'E10',l:'E10'},{k:'E85',l:'E85'},{k:'B7',l:'Gazole'},{k:'GPL',l:'GPL'}].forEach(function(f){
+          var fp=s.prices[f.k];
+          html+='<div class="fp'+(f.k===currentFuel?' active':'')+'"><div class="fp-type">'+f.l+'</div>';
+          html+=fp&&fp>0?'<div class="fp-p">'+formatPrice(fp)+'</div>':'<div class="fp-na">—</div>';
+          html+='</div>';
+        });
+        html+='</div>';
+        var tankSave=((parseFloat(saveVsMax)*50)).toFixed(2);
+        if(parseFloat(saveVsMax)>0.001) html+='<div class="saving-box">&#127381; Faire le plein ici (50L) vs le plus cher proche : <strong>économisez '+tankSave+'€</strong></div>';
+        html+='<div class="action-btns">';
+        html+='<a class="btn-go" href="https://www.google.com/maps/search/'+encodeURIComponent(s.name+' '+s.addr)+'" target="_blank" onclick="event.stopPropagation()">&#128205; Y aller</a>';
+        html+='<button class="btn-save'+(isFav?' saved':'')+'" onclick="toggleFav(\''+s.id+'\',\''+s.name+'\',event)">'+(isFav?'&#9733;':'&#9734;')+'</button>';
+        html+='</div></div>';
+      }
+      html+='</div>';
+    });
+    if(list.length>40) html+='<div style="text-align:center;padding:16px;font-size:12px;color:var(--text2)">Affichage de 40 sur '+list.length.toLocaleString()+' — affinez avec la recherche</div>';
+  }
+  html+='</div>';
+  document.getElementById('root').innerHTML=html;
+}
+
+function showError(){
+  document.getElementById('root').innerHTML='<div class="error-box">'+
+    '<h3>&#128267; Impossible de charger les données en direct</h3>'+
+    '<p>Nous n\'avons pas pu récupérer les prix du carburant en ce moment. Cela signifie généralement que le flux de données est temporairement indisponible.<br><br>Veuillez actualiser et réessayer dans un instant.</p>'+
+    '<button class="retry-btn" onclick="loadDemo()">&#128200; Aperçu avec données de démonstration</button>'+
+    '</div>';
+}
+
+function loadDemo(){
+  stations=[
+    {id:'d1',name:'Leclerc',addr:'12 Rue du Commerce, 75015 Paris',lat:48.841,lng:2.290,prices:{SP95:175900,SP98:183900,E10:171900,B7:169900,E85:89900,GPL:0},d:0.3},
+    {id:'d2',name:'Intermarché',addr:'45 Avenue Victor Hugo, 69003 Lyon',lat:45.757,lng:4.834,prices:{SP95:177900,SP98:185900,E10:173900,B7:171900,E85:92900,GPL:0},d:0.7},
+    {id:'d3',name:'Total',addr:'8 Boulevard Gambetta, 33000 Bordeaux',lat:44.837,lng:-0.580,prices:{SP95:182900,SP98:192900,E10:178900,B7:176900,E85:0,GPL:95900},d:1.1},
+    {id:'d4',name:'TotalEnergies',addr:'23 Rue de la République, 13001 Marseille',lat:43.297,lng:5.381,prices:{SP95:183900,SP98:193900,E10:179900,B7:177900,E85:0,GPL:96900},d:1.4},
+    {id:'d5',name:'Carrefour',addr:'56 Avenue du Général de Gaulle, 06000 Nice',lat:43.710,lng:7.262,prices:{SP95:176900,SP98:184900,E10:172900,B7:170900,E85:91900,GPL:0},d:1.8},
+    {id:'d6',name:'Super U',addr:'3 Route de Nantes, 44000 Nantes',lat:47.218,lng:-1.553,prices:{SP95:174900,SP98:182900,E10:170900,B7:168900,E85:88900,GPL:0},d:2.1},
+    {id:'d7',name:'Auchan',addr:'78 Rue Saint-Michel, 31000 Toulouse',lat:43.604,lng:1.444,prices:{SP95:175900,SP98:183900,E10:171900,B7:169900,E85:90900,GPL:0},d:2.5},
+    {id:'d8',name:'BP',addr:'15 Avenue de la Gare, 67000 Strasbourg',lat:48.573,lng:7.752,prices:{SP95:184900,SP98:194900,E10:180900,B7:178900,E85:0,GPL:97900},d:3.1},
+    {id:'d9',name:'Shell',addr:'32 Boulevard de la Liberté, 59000 Lille',lat:50.629,lng:3.057,prices:{SP95:185900,SP98:195900,E10:181900,B7:179900,E85:0,GPL:98900},d:3.8},
+    {id:'d10',name:'Esso',addr:'9 Quai de la Pêcherie, 69001 Lyon',lat:45.766,lng:4.828,prices:{SP95:179900,SP98:187900,E10:175900,B7:173900,E85:93900,GPL:0},d:4.2},
+  ];
+  render();
+}
+
+// Both data AND location must be ready before we render
+var dataReady = false;
+var locationReady = false;
+
+function tryRender(){
+  if(!dataReady || !locationReady) return;
+  if(userLat !== null){
+    stations.forEach(function(s){s.d=dist(userLat,userLng,s.lat,s.lng);});
+  }
+  render();
+}
+
+function showLocating(){
+  document.getElementById('root').innerHTML =
+    '<div class="loading"><div class="spinner"></div>' +
+    '<strong>Localisation en cours...</strong>' +
+    '<p>Autorisez la localisation pour voir les prix les plus proches</p>' +
+    '</div>';
+}
+
+function showLocationWarning(){
+  document.getElementById('root').innerHTML =
+    '<div class="error-box">' +
+    '<div style="font-size:40px;margin-bottom:12px">📍</div>' +
+    '<h3>Activez la localisation pour trouver les prix près de vous</h3>' +
+    '<p>PrixCarburant a besoin de votre position pour afficher les stations les plus proches et trier par distance.<br><br>' +
+    'Pour l\'activer, appuyez sur l\'icône de cadenas dans la barre d\'adresse de votre navigateur et autorisez la localisation, puis actualisez la page.</p>' +
+    '<button class="retry-btn" onclick="window.location.reload()">🔄 Réessayer</button>' +
+    '</div>';
+}
+
+function skipLocation(){
+  locationReady=true;
+  if(dataReady) render();
+  else {
+    document.getElementById('root').innerHTML =
+      '<div class="loading"><div class="spinner"></div>' +
+      '<strong>Chargement des stations...</strong>' +
+      '<p>Récupération des données en cours</p>' +
+      '</div>';
+  }
+}
+
+// Step 1: start fetching data
+fetchLiveData()
+  .then(function(){
+    dataReady = true;
+    tryRender();
+  })
+  .catch(function(err){
+    console.error('Données carburant en direct échouées:', err);
+    showError();
+  });
+
+// Step 2: get location (runs in parallel with data fetch)
+if(navigator.geolocation){
+  showLocating();
+  navigator.geolocation.getCurrentPosition(
+    function(pos){
+      userLat=pos.coords.latitude;
+      userLng=pos.coords.longitude;
+      locationReady=true;
+      tryRender();
+    },
+    function(){
+      skipLocation();
+    },
+    { timeout: 8000, maximumAge: 60000 }
+  );
+} else {
+  skipLocation();
+}
+</script>
+</body>
+</html>
