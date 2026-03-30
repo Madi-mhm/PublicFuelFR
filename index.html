@@ -79,7 +79,6 @@
     /* DETAIL PANEL */
     .card-detail{border-top:1px solid var(--border);padding:14px;background:#fafbff}
     .all-prices{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px}
-    /* FIX 5: fuel price tiles are now clickable buttons */
     .fp{background:white;border:1px solid var(--border);border-radius:8px;padding:9px 4px;text-align:center;cursor:pointer;transition:border-color 0.15s,background 0.15s}
     .fp:hover:not(.fp-disabled){border-color:#b3c9f0;background:#f4f8ff}
     .fp.active{border-color:var(--blue);background:var(--blue-light)}
@@ -131,7 +130,6 @@
     <div class="search-box">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
       <input type="text" id="search-in" placeholder="Ville, commune ou code postal..." oninput="doSearch(this.value)" autocomplete="off"/>
-      <!-- FIX 6 & 7: button explicitly triggers geolocation permission + shows address -->
       <button class="loc-btn" id="loc-btn" onclick="useMyLocation()">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
         Près de moi
@@ -199,60 +197,84 @@ function formatPrice(p){
   return p.toFixed(3)+'€';
 }
 
-// FIX 2: Improved name resolution — tries multiple fields before falling back to ID
 function resolveStationName(s) {
-  // Try common name fields from the API
-  var candidates = [
-    s.ensigne,
-    s.ensigne_id,
-    s.nom,
-    s.name,
-    s.brand,
-    s.marque
-  ];
+  var candidates = [s.ensigne, s.ensigne_id, s.nom, s.name, s.brand, s.marque];
   for (var i = 0; i < candidates.length; i++) {
     var v = candidates[i];
     if (v && typeof v === 'string' && v.trim() && !/^\d+$/.test(v.trim())) {
-      // capitalize first letter of each word
       return v.trim().replace(/\b\w/g, function(c){ return c.toUpperCase(); });
     }
   }
-  // Last resort: derive from address city
   if (s.ville) return 'Station — ' + s.ville;
   return 'Station';
 }
 
+// FIXED: now reads BOTH the flat fields AND the "prix" JSON array
+// The API sometimes uses one, sometimes the other, sometimes both
 function mapFRPrices(s) {
   var prices = {};
-  var map = {gazole_prix:'B7', sp95_prix:'SP95', sp98_prix:'SP98', e10_prix:'E10', e85_prix:'E85', gplc_prix:'GPL'};
-  Object.keys(map).forEach(function(k){
+
+  // Method 1: flat fields like gazole_prix, sp95_prix, etc.
+  var flatMap = {gazole_prix:'B7', sp95_prix:'SP95', sp98_prix:'SP98', e10_prix:'E10', e85_prix:'E85', gplc_prix:'GPL'};
+  Object.keys(flatMap).forEach(function(k){
     var v = parseFloat(s[k]);
-    if(v > 0) prices[map[k]] = v;
+    if(v > 0) prices[flatMap[k]] = v;
   });
+
+  // Method 2: parse the "prix" JSON string array
+  // Many stations ONLY have this and the flat fields are null/missing
+  if (s.prix) {
+    try {
+      var prixArr = typeof s.prix === 'string' ? JSON.parse(s.prix) : s.prix;
+      var nomMap = {'Gazole':'B7','SP95':'SP95','SP98':'SP98','E10':'E10','E85':'E85','GPLc':'GPL'};
+      if (Array.isArray(prixArr)) {
+        prixArr.forEach(function(p) {
+          var key = nomMap[p['@nom']];
+          var val = parseFloat(p['@valeur']);
+          if (key && val > 0 && !prices[key]) {
+            // Only set if not already set by flat fields (flat fields take priority)
+            prices[key] = val;
+          }
+        });
+      }
+    } catch(e) {
+      // Silently ignore malformed prix field
+    }
+  }
+
   return prices;
+}
+
+// FIXED: always prefer geom.lat/lon (always correct GPS),
+// only fall back to raw lat/lng if geom is missing
+function parseCoords(s) {
+  // geom is always reliable GPS coordinates
+  if (s.geom && s.geom.lat && s.geom.lon) {
+    return { lat: parseFloat(s.geom.lat), lng: parseFloat(s.geom.lon) };
+  }
+  // Raw lat/lng can be in different formats depending on the station
+  var lat = parseFloat(s.latitude || 0);
+  var lng = parseFloat(s.longitude || 0);
+  // Some stations store coordinates multiplied by 100000 (old format)
+  if (Math.abs(lat) > 1000) lat = lat / 100000;
+  if (Math.abs(lng) > 1000) lng = lng / 100000;
+  return { lat: lat, lng: lng };
 }
 
 function parseFRStations(data) {
   var raw = data.stations || [];
   return raw.map(function(s){
-    var lat, lng;
-    if(s.geom && s.geom.lat && s.geom.lon){
-      lat = parseFloat(s.geom.lat);
-      lng = parseFloat(s.geom.lon);
-    } else {
-      lat = parseFloat(s.latitude || 0);
-      lng = parseFloat(s.longitude || 0);
-      if(Math.abs(lat) > 1000) lat = lat / 100000;
-      if(Math.abs(lng) > 1000) lng = lng / 100000;
-    }
-    if(!lat || !lng) return null;
-    var prices = mapFRPrices(s);
-    if(!Object.keys(prices).some(function(k){return prices[k]>0;})) return null;
+    var coords = parseCoords(s);
+    var lat = coords.lat;
+    var lng = coords.lng;
 
-    // FIX 2: use improved name resolver
+    if (!lat || !lng) return null;
+
+    var prices = mapFRPrices(s);
+    if (!Object.keys(prices).some(function(k){ return prices[k] > 0; })) return null;
+
     var name = resolveStationName(s);
 
-    // Store extra fields for FIX 4 (search by city/cp)
     return {
       id: 'fr_' + (s.id || Math.random().toString(36).slice(2,8)),
       name: name,
@@ -260,6 +282,7 @@ function parseFRStations(data) {
       cp: (s.cp || '').toString(),
       ville: (s.ville || '').toLowerCase(),
       lat: lat, lng: lng, prices: prices,
+      // Default to 99999 — will be recalculated after fetch
       d: userLat !== null ? dist(userLat, userLng, lat, lng) : 99999
     };
   }).filter(Boolean);
@@ -296,14 +319,20 @@ function fetchLiveData(){
 
 function getP(s){return s.prices[currentFuel]||0;}
 
-// FIX 4: Search also checks cp and ville fields
+// FIXED: distance filter is safe — only excludes stations when:
+// 1. We have the user's GPS location
+// 2. The station has a real calculated distance (not the 99999 default)
 function getFiltered(){
-  var q=searchQ.toLowerCase().trim();
+  var q = searchQ.toLowerCase().trim();
+  var MAX_KM = 15;
+
   var filtered = stations.filter(function(s){
-    if(getP(s)<=0) return false;
-    // ✅ Add this: exclude stations beyond 15km when location is known
-    if(userLat !== null && s.d > 15) return false;
-    if(q){
+    if (getP(s) <= 0) return false;
+
+    // Only filter by distance if location is known AND distance is real (not default 99999)
+    if (userLat !== null && s.d < 9999 && s.d > MAX_KM) return false;
+
+    if (q) {
       return (s.name||'').toLowerCase().includes(q) ||
              (s.addr||'').toLowerCase().includes(q) ||
              (s.cp||'').includes(q) ||
@@ -312,7 +341,6 @@ function getFiltered(){
     return true;
   });
 
-  // FIX 1: sort is applied correctly and re-read each time
   filtered.sort(function(a,b){
     if(sortMode==='dist'){
       return (a.d||99999)-(b.d||99999);
@@ -331,25 +359,21 @@ function setFuel(f,el){
   render();
 }
 
-// FIX 1: setSort reads the select value correctly and re-renders
 function setSort(v){
   sortMode=v;
   render();
 }
 
-// FIX 5: switch fuel from detail panel tile click
 function switchFuelFromCard(fuelKey, event) {
   event.stopPropagation();
   if(!fuelKey) return;
   currentFuel = fuelKey;
-  // Update the tab highlight
   document.querySelectorAll('.ftab').forEach(function(t){
     t.classList.toggle('on', t.textContent.trim() === (fuelKey === 'B7' ? 'Gazole' : fuelKey));
   });
   render();
 }
 
-// FIX 6 & 7: explicit geolocation trigger + reverse geocode to fill search bar
 function useMyLocation(){
   if(!navigator.geolocation){
     showToast('Géolocalisation non supportée par ce navigateur');
@@ -359,7 +383,6 @@ function useMyLocation(){
   btn.classList.add('loading-loc');
   btn.textContent = '⏳ Localisation...';
 
-  // This call will trigger the browser's permission dialog if not yet decided
   navigator.geolocation.getCurrentPosition(
     function(pos){
       userLat = pos.coords.latitude;
@@ -371,32 +394,27 @@ function useMyLocation(){
       // Recalculate distances for already-loaded stations
       stations.forEach(function(s){ s.d = dist(userLat, userLng, s.lat, s.lng); });
 
-      // FIX 7: reverse geocode to show address in search bar
       reverseGeocode(userLat, userLng, function(label){
         var input = document.getElementById('search-in');
         if(input && label){
           input.value = label;
-          // Do NOT filter by this label — just display it
-          // Clear text search so all nearby stations show
           searchQ = '';
         }
         showToast('📍 Position trouvée : ' + (label || 'votre position'));
       });
 
-      // Switch sort to nearest first automatically
       sortMode = 'dist';
-      // Update the select element value too
       var sel = document.querySelector('.sort-bar select');
       if(sel) sel.value = 'dist';
 
-      // Reload data with user coords for better radius
+      // Reload with user coords so backend applies the 15km geo filter
       fetchLiveData()
         .then(function(){
           stations.forEach(function(s){ s.d = dist(userLat, userLng, s.lat, s.lng); });
           render();
         })
         .catch(function(){
-          render(); // still render with already-loaded stations
+          render();
         });
     },
     function(err){
@@ -415,7 +433,6 @@ function useMyLocation(){
   );
 }
 
-// FIX 7: reverse geocode using nominatim (no key needed)
 function reverseGeocode(lat, lng, cb){
   fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat='+lat+'&lon='+lng+'&zoom=14&accept-language=fr', {
     headers: { 'Accept-Language': 'fr' }
@@ -447,9 +464,6 @@ function showToast(msg){
   setTimeout(function(){t.classList.remove('show');},2800);
 }
 
-var FUEL_TABS = ['SP95','SP98','E10','E85','B7','GPL'];
-var FUEL_LABELS = {SP95:'SP95',SP98:'SP98',E10:'E10',E85:'E85',B7:'Gazole',GPL:'GPL'};
-
 function render(){
   var list=getFiltered();
   var prices=list.map(function(s){return getP(s);});
@@ -460,7 +474,7 @@ function render(){
   var html='';
 
   html+='<div class="updated-bar">';
-  html+='<span>&#128197; Mis à jour sous 30 min &nbsp;|&nbsp; '+stations.length.toLocaleString()+' stations en France</span>';
+  html+='<span>&#128197; Mis à jour sous 30 min &nbsp;|&nbsp; '+stations.length.toLocaleString()+' stations chargées</span>';
   html+='<span style="color:#1e8c45;font-weight:600">&#10003; En direct</span>';
   html+='</div>';
 
@@ -470,7 +484,6 @@ function render(){
   html+='<div class="stat"><div class="stat-label">Économie max</div><div class="stat-val green">'+(minP&&maxP?(maxP-minP).toFixed(3)+'€':'—')+'</div></div>';
   html+='</div>';
 
-  // FIX 1: preserve sortMode in the select so the UI matches state
   html+='<div class="sort-bar"><span>'+list.length.toLocaleString()+' stations avec '+currentFuel+'</span>';
   html+='<select onchange="setSort(this.value)">';
   html+='<option value="price"'+(sortMode==='price'?' selected':'')+'>Moins cher d\'abord</option>';
@@ -497,7 +510,7 @@ function render(){
       html+='<div class="card-info">';
       html+='<div class="card-name">'+escHtml(s.name)+(isBest?'<span class="best-badge">&#9733; Meilleur prix</span>':'')+'</div>';
       if(s.addr) html+='<div class="card-addr">'+escHtml(s.addr)+'</div>';
-      if(userLat!==null) html+='<div class="card-dist">à '+distStr+' km</div>';
+      if(userLat!==null && s.d < 9999) html+='<div class="card-dist">à '+distStr+' km</div>';
       html+='</div>';
       html+='<div class="price-col">';
       html+='<div class="price-big" style="color:'+(isBest?'#1e8c45':'#202124')+'">'+formatPrice(p)+'</div>';
@@ -509,7 +522,6 @@ function render(){
         html+='<div class="card-detail">';
         html+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Tous les prix à cette station</div>';
         html+='<div class="all-prices">';
-        // FIX 5: each fuel tile is a clickable button that switches currentFuel
         [{k:'SP95',l:'SP95'},{k:'SP98',l:'SP98'},{k:'E10',l:'E10'},{k:'E85',l:'E85'},{k:'B7',l:'Gazole'},{k:'GPL',l:'GPL'}].forEach(function(f){
           var fp=s.prices[f.k];
           var hasPrice = fp && fp > 0;
@@ -537,7 +549,6 @@ function render(){
   document.getElementById('root').innerHTML=html;
 }
 
-// XSS helpers
 function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function escAttr(s){ return (s||'').replace(/'/g,'\\\''); }
 
@@ -554,21 +565,12 @@ function loadDemo(){
     {id:'d1',name:'Leclerc',addr:'12 Rue du Commerce, 75015 Paris',cp:'75015',ville:'paris',lat:48.841,lng:2.290,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.899,GPL:0},d:0.3},
     {id:'d2',name:'Intermarché',addr:'45 Avenue Victor Hugo, 69003 Lyon',cp:'69003',ville:'lyon',lat:45.757,lng:4.834,prices:{SP95:1.779,SP98:1.859,E10:1.739,B7:1.719,E85:0.929,GPL:0},d:0.7},
     {id:'d3',name:'Total',addr:'8 Boulevard Gambetta, 33000 Bordeaux',cp:'33000',ville:'bordeaux',lat:44.837,lng:-0.580,prices:{SP95:1.829,SP98:1.929,E10:1.789,B7:1.769,E85:0,GPL:0.959},d:1.1},
-    {id:'d4',name:'TotalEnergies',addr:'23 Rue de la République, 13001 Marseille',cp:'13001',ville:'marseille',lat:43.297,lng:5.381,prices:{SP95:1.839,SP98:1.939,E10:1.799,B7:1.779,E85:0,GPL:0.969},d:1.4},
-    {id:'d5',name:'Carrefour',addr:'56 Avenue du Général de Gaulle, 06000 Nice',cp:'06000',ville:'nice',lat:43.710,lng:7.262,prices:{SP95:1.769,SP98:1.849,E10:1.729,B7:1.709,E85:0.919,GPL:0},d:1.8},
-    {id:'d6',name:'Super U',addr:'3 Route de Nantes, 44000 Nantes',cp:'44000',ville:'nantes',lat:47.218,lng:-1.553,prices:{SP95:1.749,SP98:1.829,E10:1.709,B7:1.689,E85:0.889,GPL:0},d:2.1},
-    {id:'d7',name:'Auchan',addr:'78 Rue Saint-Michel, 31000 Toulouse',cp:'31000',ville:'toulouse',lat:43.604,lng:1.444,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.909,GPL:0},d:2.5},
-    {id:'d8',name:'BP',addr:'15 Avenue de la Gare, 67000 Strasbourg',cp:'67000',ville:'strasbourg',lat:48.573,lng:7.752,prices:{SP95:1.849,SP98:1.949,E10:1.809,B7:1.789,E85:0,GPL:0.979},d:3.1},
-    {id:'d9',name:'Shell',addr:'32 Boulevard de la Liberté, 59000 Lille',cp:'59000',ville:'lille',lat:50.629,lng:3.057,prices:{SP95:1.859,SP98:1.959,E10:1.819,B7:1.799,E85:0,GPL:0.989},d:3.8},
-    {id:'d10',name:'Esso',addr:'9 Quai de la Pêcherie, 69001 Lyon',cp:'69001',ville:'lyon',lat:45.766,lng:4.828,prices:{SP95:1.799,SP98:1.879,E10:1.759,B7:1.739,E85:0.939,GPL:0},d:4.2},
   ];
   render();
 }
 
-// FIX 3: fetch location first, THEN load data with coordinates for proper nearby results
 function init(){
   if(navigator.geolocation){
-    // Try a quick silent location grab before first data load
     navigator.geolocation.getCurrentPosition(
       function(pos){
         userLat = pos.coords.latitude;
@@ -585,7 +587,6 @@ function init(){
           });
       },
       function(){
-        // Permission denied or unavailable — load without location
         fetchLiveData()
           .then(function(){ render(); })
           .catch(function(err){
