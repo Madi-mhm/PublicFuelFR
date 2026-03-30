@@ -324,13 +324,9 @@ function getP(s){return s.prices[currentFuel]||0;}
 // 2. The station has a real calculated distance (not the 99999 default)
 function getFiltered(){
   var q = searchQ.toLowerCase().trim();
-  var MAX_KM = 15;
 
   var filtered = stations.filter(function(s){
     if (getP(s) <= 0) return false;
-
-    // Only filter by distance if location is known AND distance is real (not default 99999)
-    if (userLat !== null && s.d < 9999 && s.d > MAX_KM) return false;
 
     if (q) {
       return (s.name||'').toLowerCase().includes(q) ||
@@ -340,6 +336,16 @@ function getFiltered(){
     }
     return true;
   });
+
+  filtered.sort(function(a,b){
+    if(sortMode==='dist'){
+      return (a.d||99999)-(b.d||99999);
+    }
+    return getP(a)-getP(b);
+  });
+
+  return filtered;
+}
 
   filtered.sort(function(a,b){
     if(sortMode==='dist'){
