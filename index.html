@@ -187,16 +187,18 @@ function dist(lat1,lng1,lat2,lng2){
 
 function formatPrice(p){
   if(!p||p<=0) return null;
-  return (p/100).toFixed(3)+'€';
+  return p.toFixed(3)+'€';
 }
 
 // Map French fuel type names to our internal keys
+// Prices from the API are already in euros (e.g. 2.249)
+// Coordinates may be in 1/100000 degrees format (e.g. 4357200 = 43.572)
 function mapFRPrices(s) {
   var prices = {};
   var map = {gazole_prix:'B7', sp95_prix:'SP95', sp98_prix:'SP98', e10_prix:'E10', e85_prix:'E85', gplc_prix:'GPL'};
   Object.keys(map).forEach(function(k){
     var v = parseFloat(s[k]);
-    if(v > 0) prices[map[k]] = Math.round(v * 100);
+    if(v > 0) prices[map[k]] = v; // store as euros directly
   });
   return prices;
 }
@@ -204,14 +206,25 @@ function mapFRPrices(s) {
 function parseFRStations(data) {
   var raw = data.stations || [];
   return raw.map(function(s){
-    var lat = parseFloat(s.latitude || 0);
-    var lng = parseFloat(s.longitude || 0);
+    // Coordinates: prefer geom object, otherwise parse raw fields
+    // Raw lat/lng may be in 1/100000 degrees (e.g. 4357200 → 43.572)
+    var lat, lng;
+    if(s.geom && s.geom.lat && s.geom.lon){
+      lat = parseFloat(s.geom.lat);
+      lng = parseFloat(s.geom.lon);
+    } else {
+      lat = parseFloat(s.latitude || 0);
+      lng = parseFloat(s.longitude || 0);
+      // Detect 1/100000 degree format
+      if(Math.abs(lat) > 1000) lat = lat / 100000;
+      if(Math.abs(lng) > 1000) lng = lng / 100000;
+    }
     if(!lat || !lng) return null;
     var prices = mapFRPrices(s);
     if(!Object.keys(prices).some(function(k){return prices[k]>0;})) return null;
     return {
       id: 'fr_' + (s.id || Math.random().toString(36).slice(2,8)),
-      name: s.ensigne || s.ensigne_id || s.id || 'Station',
+      name: s.ensigne || s.ensigne_id || String(s.id) || 'Station',
       addr: [s.adresse, s.cp, s.ville].filter(Boolean).join(', ') || '',
       lat: lat, lng: lng, prices: prices,
       d: userLat !== null ? dist(userLat, userLng, lat, lng) : 99999
@@ -307,7 +320,7 @@ function render(){
   html+='<div class="stats-row">';
   html+='<div class="stat"><div class="stat-label">Le moins cher</div><div class="stat-val green">'+(minP?formatPrice(minP):'—')+'</div></div>';
   html+='<div class="stat"><div class="stat-label">Moyenne</div><div class="stat-val">'+(avgP?formatPrice(avgP):'—')+'</div></div>';
-  html+='<div class="stat"><div class="stat-label">Économie max</div><div class="stat-val green">'+(minP&&maxP?((maxP-minP)/100).toFixed(3)+'€':'—')+'</div></div>';
+  html+='<div class="stat"><div class="stat-label">Économie max</div><div class="stat-val green">'+(minP&&maxP?(maxP-minP).toFixed(3)+'€':'—')+'</div></div>';
   html+='</div>';
 
   html+='<div class="sort-bar"><span>'+list.length.toLocaleString()+' stations avec '+currentFuel+'</span>';
@@ -324,7 +337,7 @@ function render(){
       var isSel=selectedId===s.id;
       var brand=getBrand(s.name);
       var distStr=s.d<100?s.d.toFixed(1):Math.round(s.d);
-      var saveVsMax=((maxP-p)/100).toFixed(3);
+      var saveVsMax=(maxP-p).toFixed(3);
       var isFav=!!favourites[s.id];
 
       html+='<div class="card'+(isBest?' best':'')+(isSel?' selected':'')+'" onclick="toggleCard(\''+s.id+'\')">';
@@ -352,7 +365,7 @@ function render(){
           html+='</div>';
         });
         html+='</div>';
-        var tankSave=((parseFloat(saveVsMax)*50)).toFixed(2);
+        var tankSave=(parseFloat(saveVsMax)*50).toFixed(2);
         if(parseFloat(saveVsMax)>0.001) html+='<div class="saving-box">&#127381; Faire le plein ici (50L) vs le plus cher proche : <strong>économisez '+tankSave+'€</strong></div>';
         html+='<div class="action-btns">';
         html+='<a class="btn-go" href="https://www.google.com/maps/search/'+encodeURIComponent(s.name+' '+s.addr)+'" target="_blank" onclick="event.stopPropagation()">&#128205; Y aller</a>';
@@ -377,16 +390,16 @@ function showError(){
 
 function loadDemo(){
   stations=[
-    {id:'d1',name:'Leclerc',addr:'12 Rue du Commerce, 75015 Paris',lat:48.841,lng:2.290,prices:{SP95:175900,SP98:183900,E10:171900,B7:169900,E85:89900,GPL:0},d:0.3},
-    {id:'d2',name:'Intermarché',addr:'45 Avenue Victor Hugo, 69003 Lyon',lat:45.757,lng:4.834,prices:{SP95:177900,SP98:185900,E10:173900,B7:171900,E85:92900,GPL:0},d:0.7},
-    {id:'d3',name:'Total',addr:'8 Boulevard Gambetta, 33000 Bordeaux',lat:44.837,lng:-0.580,prices:{SP95:182900,SP98:192900,E10:178900,B7:176900,E85:0,GPL:95900},d:1.1},
-    {id:'d4',name:'TotalEnergies',addr:'23 Rue de la République, 13001 Marseille',lat:43.297,lng:5.381,prices:{SP95:183900,SP98:193900,E10:179900,B7:177900,E85:0,GPL:96900},d:1.4},
-    {id:'d5',name:'Carrefour',addr:'56 Avenue du Général de Gaulle, 06000 Nice',lat:43.710,lng:7.262,prices:{SP95:176900,SP98:184900,E10:172900,B7:170900,E85:91900,GPL:0},d:1.8},
-    {id:'d6',name:'Super U',addr:'3 Route de Nantes, 44000 Nantes',lat:47.218,lng:-1.553,prices:{SP95:174900,SP98:182900,E10:170900,B7:168900,E85:88900,GPL:0},d:2.1},
-    {id:'d7',name:'Auchan',addr:'78 Rue Saint-Michel, 31000 Toulouse',lat:43.604,lng:1.444,prices:{SP95:175900,SP98:183900,E10:171900,B7:169900,E85:90900,GPL:0},d:2.5},
-    {id:'d8',name:'BP',addr:'15 Avenue de la Gare, 67000 Strasbourg',lat:48.573,lng:7.752,prices:{SP95:184900,SP98:194900,E10:180900,B7:178900,E85:0,GPL:97900},d:3.1},
-    {id:'d9',name:'Shell',addr:'32 Boulevard de la Liberté, 59000 Lille',lat:50.629,lng:3.057,prices:{SP95:185900,SP98:195900,E10:181900,B7:179900,E85:0,GPL:98900},d:3.8},
-    {id:'d10',name:'Esso',addr:'9 Quai de la Pêcherie, 69001 Lyon',lat:45.766,lng:4.828,prices:{SP95:179900,SP98:187900,E10:175900,B7:173900,E85:93900,GPL:0},d:4.2},
+    {id:'d1',name:'Leclerc',addr:'12 Rue du Commerce, 75015 Paris',lat:48.841,lng:2.290,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.899,GPL:0},d:0.3},
+    {id:'d2',name:'Intermarché',addr:'45 Avenue Victor Hugo, 69003 Lyon',lat:45.757,lng:4.834,prices:{SP95:1.779,SP98:1.859,E10:1.739,B7:1.719,E85:0.929,GPL:0},d:0.7},
+    {id:'d3',name:'Total',addr:'8 Boulevard Gambetta, 33000 Bordeaux',lat:44.837,lng:-0.580,prices:{SP95:1.829,SP98:1.929,E10:1.789,B7:1.769,E85:0,GPL:0.959},d:1.1},
+    {id:'d4',name:'TotalEnergies',addr:'23 Rue de la République, 13001 Marseille',lat:43.297,lng:5.381,prices:{SP95:1.839,SP98:1.939,E10:1.799,B7:1.779,E85:0,GPL:0.969},d:1.4},
+    {id:'d5',name:'Carrefour',addr:'56 Avenue du Général de Gaulle, 06000 Nice',lat:43.710,lng:7.262,prices:{SP95:1.769,SP98:1.849,E10:1.729,B7:1.709,E85:0.919,GPL:0},d:1.8},
+    {id:'d6',name:'Super U',addr:'3 Route de Nantes, 44000 Nantes',lat:47.218,lng:-1.553,prices:{SP95:1.749,SP98:1.829,E10:1.709,B7:1.689,E85:0.889,GPL:0},d:2.1},
+    {id:'d7',name:'Auchan',addr:'78 Rue Saint-Michel, 31000 Toulouse',lat:43.604,lng:1.444,prices:{SP95:1.759,SP98:1.839,E10:1.719,B7:1.699,E85:0.909,GPL:0},d:2.5},
+    {id:'d8',name:'BP',addr:'15 Avenue de la Gare, 67000 Strasbourg',lat:48.573,lng:7.752,prices:{SP95:1.849,SP98:1.949,E10:1.809,B7:1.789,E85:0,GPL:0.979},d:3.1},
+    {id:'d9',name:'Shell',addr:'32 Boulevard de la Liberté, 59000 Lille',lat:50.629,lng:3.057,prices:{SP95:1.859,SP98:1.959,E10:1.819,B7:1.799,E85:0,GPL:0.989},d:3.8},
+    {id:'d10',name:'Esso',addr:'9 Quai de la Pêcherie, 69001 Lyon',lat:45.766,lng:4.828,prices:{SP95:1.799,SP98:1.879,E10:1.759,B7:1.739,E85:0.939,GPL:0},d:4.2},
   ];
   render();
 }
