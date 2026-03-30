@@ -2,7 +2,8 @@ async function fetchFrance(lat, lng) {
   try {
     let url;
     if (lat && lng) {
-      url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?limit=100&geofilter.distance=${lat},${lng},15000`;
+      // Increased limit to 500, radius stays 15km
+      url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?limit=500&geofilter.distance=${lat},${lng},15000`;
     } else {
       url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?limit=500`;
     }
